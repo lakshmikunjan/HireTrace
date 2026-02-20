@@ -48,8 +48,13 @@ def parse_email(sender: str, subject: str, body: str) -> ParseResult:
     if result.confidence < settings.llm_confidence_threshold:
         llm_result = llm.parse(sender, subject, body)
         llm_result.compute_confidence()
-        # Use the LLM result but keep the regex result's platform detection
+        # Use the LLM result's platform-neutral extraction, but keep the
+        # regex parser's platform detection (linkedin / indeed / direct).
         llm_result.platform = result.platform
-        return llm_result
+        # Only upgrade to the LLM result if it extracted more info than
+        # the regex parser did — avoids losing good regex data when the
+        # LLM API key is invalid or the LLM returns nothing useful.
+        if llm_result.confidence > result.confidence:
+            return llm_result
 
     return result

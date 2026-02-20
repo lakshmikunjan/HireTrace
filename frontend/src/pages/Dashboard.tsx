@@ -16,7 +16,12 @@ export function Dashboard() {
   const { user } = useAuth();
   const [filters, setFilters] = useState<ApplicationFilters>({});
   const { data: applications = [], isLoading } = useApplications(filters);
-  const { data: stats } = useQuery({ queryKey: ["stats"], queryFn: fetchStats });
+  const { data: stats } = useQuery({
+    queryKey: ["stats"],
+    queryFn: fetchStats,
+    refetchInterval: 2 * 60 * 1000,
+    refetchOnWindowFocus: true,
+  });
   const scan = useTriggerScan();
 
   const handleLogout = async () => {

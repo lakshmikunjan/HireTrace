@@ -30,6 +30,7 @@ class JobApplication(Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="applied")
 
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Gmail message ID used for deduplication

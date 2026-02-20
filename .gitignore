@@ -1,0 +1,54 @@
+# Environment variables
+backend/.env
+frontend/.env
+
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/*.pyc
+backend/__pycache__/
+backend/*/__pycache__/
+**/__pycache__/
+**/*.pyc
+*.pyc
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Node.js
+frontend/node_modules/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.npm
+frontend/.eslintcache
+
+# Build outputs
+frontend/dist/
+frontend/build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# Alembic
+backend/alembic/__pycache__/
+backend/alembic/versions/__pycache__/

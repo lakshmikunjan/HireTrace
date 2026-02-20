@@ -7,6 +7,7 @@ import type { Application, ApplicationStatus } from "../lib/types";
 const STATUS_COLORS: Record<ApplicationStatus, string> = {
   applied: "bg-blue-100 text-blue-700",
   phone_screen: "bg-purple-100 text-purple-700",
+  assessment: "bg-orange-100 text-orange-700",
   technical: "bg-yellow-100 text-yellow-700",
   offer: "bg-green-100 text-green-700",
   rejected: "bg-red-100 text-red-700",
@@ -14,7 +15,7 @@ const STATUS_COLORS: Record<ApplicationStatus, string> = {
 };
 
 const STATUSES: ApplicationStatus[] = [
-  "applied", "phone_screen", "technical", "offer", "rejected", "ghosted",
+  "applied", "phone_screen", "assessment", "technical", "offer", "rejected", "ghosted",
 ];
 
 interface Props {
@@ -42,7 +43,6 @@ export function ApplicationTable({ applications }: Props) {
             <th className="py-3 pr-4 font-medium">Company</th>
             <th className="py-3 pr-4 font-medium">Role</th>
             <th className="py-3 pr-4 font-medium">Location</th>
-            <th className="py-3 pr-4 font-medium">Salary</th>
             <th className="py-3 pr-4 font-medium">Platform</th>
             <th className="py-3 pr-4 font-medium">Status</th>
             <th className="py-3 pr-4 font-medium">Applied</th>
@@ -63,9 +63,6 @@ export function ApplicationTable({ applications }: Props) {
               </td>
               <td className="py-3 pr-4 text-gray-600">
                 {app.location ?? "—"}
-              </td>
-              <td className="py-3 pr-4 text-gray-600">
-                {app.salary_range ?? "—"}
               </td>
               <td className="py-3 pr-4">
                 <span className="capitalize text-gray-600">{app.platform}</span>

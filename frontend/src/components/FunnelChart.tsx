@@ -12,6 +12,7 @@ import type { DashboardStats } from "../lib/types";
 const FUNNEL_ORDER = [
   { key: "applied", label: "Applied", color: "#3b82f6" },
   { key: "phone_screen", label: "Phone Screen", color: "#8b5cf6" },
+  { key: "assessment", label: "Assessment", color: "#f97316" },
   { key: "technical", label: "Technical", color: "#f59e0b" },
   { key: "offer", label: "Offer", color: "#10b981" },
   { key: "rejected", label: "Rejected", color: "#ef4444" },

@@ -7,10 +7,9 @@ export default defineConfig({
     host: true,
     port: 5173,
     proxy: {
+      // Only proxy /auth so the OAuth redirect link works from the frontend.
+      // All JSON API calls go directly to http://localhost:8000 via axios baseURL.
       "/auth": "http://localhost:8000",
-      "/applications": "http://localhost:8000",
-      "/dashboard": "http://localhost:8000",
-      "/health": "http://localhost:8000",
     },
   },
 });

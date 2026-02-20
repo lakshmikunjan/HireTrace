@@ -15,7 +15,7 @@ export function Auth() {
         </p>
 
         <a
-          href="/auth/google"
+          href="http://localhost:8000/auth/google"
           className="flex items-center justify-center gap-3 w-full bg-brand-600 hover:bg-brand-700 text-white font-medium rounded-lg px-5 py-3 transition-colors"
         >
           <Mail className="w-5 h-5" />

@@ -1,6 +1,7 @@
 export type ApplicationStatus =
   | "applied"
   | "phone_screen"
+  | "assessment"
   | "technical"
   | "offer"
   | "rejected"
@@ -17,6 +18,7 @@ export interface Application {
   platform: ApplicationPlatform;
   status: ApplicationStatus;
   applied_at: string | null;
+  rejected_at: string | null;
   last_activity_at: string | null;
   parse_confidence: number | null;
   manually_overridden: boolean;
@@ -29,6 +31,7 @@ export interface DashboardStats {
   ghosting_count: number;
   applied_today: number;
   applied_this_week: number;
+  applied_this_month: number;
 }
 
 export interface User {

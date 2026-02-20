@@ -8,7 +8,7 @@ import type {
 } from "./types";
 
 const api = axios.create({
-  baseURL: "",
+  baseURL: "http://localhost:8000",
   withCredentials: true,
 });
 

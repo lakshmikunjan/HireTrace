@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 ApplicationStatus = Literal[
-    "applied", "phone_screen", "technical", "offer", "rejected", "ghosted"
+    "applied", "phone_screen", "assessment", "technical", "offer", "rejected", "ghosted"
 ]
 ApplicationPlatform = Literal["linkedin", "indeed", "direct"]
 
@@ -19,6 +19,7 @@ class ApplicationOut(BaseModel):
     platform: str
     status: str
     applied_at: datetime | None
+    rejected_at: datetime | None
     last_activity_at: datetime | None
     parse_confidence: float | None
     manually_overridden: bool
@@ -44,3 +45,4 @@ class DashboardStats(BaseModel):
     ghosting_count: int
     applied_today: int
     applied_this_week: int
+    applied_this_month: int

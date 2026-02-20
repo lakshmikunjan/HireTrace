@@ -6,7 +6,7 @@ interface Props {
 }
 
 const STATUSES: ApplicationStatus[] = [
-  "applied", "phone_screen", "technical", "offer", "rejected", "ghosted",
+  "applied", "phone_screen", "assessment", "technical", "offer", "rejected", "ghosted",
 ];
 
 const PLATFORMS: ApplicationPlatform[] = ["linkedin", "indeed", "direct"];

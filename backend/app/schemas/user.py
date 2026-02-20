@@ -1,12 +1,12 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 
 class UserOut(BaseModel):
     id: uuid.UUID
-    email: EmailStr
+    email: str
     last_scan_at: datetime | None
     created_at: datetime
 

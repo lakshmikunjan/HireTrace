@@ -10,12 +10,73 @@ from googleapiclient.discovery import build
 
 from app.config import settings
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "openid",
+    "email",
+]
 
-# Gmail search query to find job application confirmation emails
+# Gmail search query to find job application confirmation emails (2026 only)
+#
+# Sender-based terms target the SPECIFIC senders that send application confirmations,
+# NOT entire domains — this avoids capturing LinkedIn newsletters/notifications and
+# Indeed job alerts which would flood the 2000-result limit and bury real emails.
+#
+# LinkedIn application confirmations come from:
+#   jobs-noreply@linkedin.com  — "Your application to Role at Company"
+#   jobs-listings@linkedin.com — "Your application was sent to Company"
+#
+# Indeed application confirmations come from:
+#   indeedapply@indeed.com     — "Application submitted" format
 APPLICATION_QUERY = (
-    '"Thank you for applying" OR "Application received" OR "Your application to" OR '
-    '"We received your application" OR "application has been submitted"'
+    '('
+    'from:jobs-noreply@linkedin.com OR '
+    'from:jobs-listings@linkedin.com OR '
+    'from:indeedapply@indeed.com OR '
+    '"Thank you for applying" OR '
+    '"Application received" OR '
+    '"Your application to" OR '
+    '"We received your application" OR '
+    '"application has been submitted" OR '
+    '"Application submitted" OR '
+    '"Thank you for submitting" OR '
+    '"submitted your application" OR '
+    '"Your application was sent" OR '
+    '"application was sent to" OR '
+    '"We have received your application" OR '
+    '"received your resume"'
+    ') -subject:"was viewed by" after:2026/01/01'
+)
+
+# Gmail search query to find rejection emails (2026 only)
+# Broad enough to catch varied phrasing while avoiding false positives
+REJECTION_QUERY = (
+    '("move forward with other candidates" OR '
+    '"not moving forward with your application" OR '
+    '"decided to pursue other" OR '
+    '"we regret to inform" OR '
+    '"application was not selected" OR '
+    '"not selected for" OR '
+    '"not be moving forward" OR '
+    '"unable to move forward" OR '
+    '"not be proceeding" OR '
+    '"have filled this position" OR '
+    '"decided to go in a different direction" OR '
+    '"chosen to move forward with another") after:2026/01/01'
+)
+
+# Gmail search query to find assessment/coding challenge emails (2026 only)
+ASSESSMENT_QUERY = (
+    '("complete your assessment" OR '
+    '"coding challenge" OR '
+    '"technical assessment" OR '
+    '"online assessment" OR '
+    '"HackerRank" OR '
+    '"Codility" OR '
+    '"CodeSignal" OR '
+    '"take-home" OR '
+    '"invited to complete" OR '
+    '"next steps" "assessment") after:2026/01/01'
 )
 
 
@@ -82,28 +143,57 @@ def _build_credentials(user) -> Credentials:
         scopes=SCOPES,
     )
     if user.token_expires_at:
-        creds.expiry = user.token_expires_at.replace(tzinfo=timezone.utc)
+        # Google's library compares expiry with a naive UTC datetime,
+        # so strip the timezone info (the value is already stored as UTC).
+        creds.expiry = user.token_expires_at.replace(tzinfo=None)
     return creds
 
 
-def list_new_messages(user, max_results: int = 100) -> list[dict]:
+def _list_all_messages(service, query: str, hard_limit: int = 5000) -> list[dict]:
     """
-    List Gmail messages matching the application keyword filter.
-    Refreshes the access token if expired.
-    Returns a list of minimal message objects with 'id' and 'threadId'.
+    Paginate through the Gmail messages list API until all results are returned.
+    Gmail returns at most 100 per page; we loop through nextPageToken.
+    hard_limit guards against runaway scans on very large inboxes.
     """
+    all_messages: list[dict] = []
+    page_token: str | None = None
+
+    while len(all_messages) < hard_limit:
+        kwargs: dict = {"userId": "me", "q": query, "maxResults": 100}
+        if page_token:
+            kwargs["pageToken"] = page_token
+
+        result = service.users().messages().list(**kwargs).execute()
+        all_messages.extend(result.get("messages", []))
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
+
+    return all_messages
+
+
+def _get_service(user):
     creds = _build_credentials(user)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
-    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
-    result = (
-        service.users()
-        .messages()
-        .list(userId="me", q=APPLICATION_QUERY, maxResults=max_results)
-        .execute()
-    )
-    return result.get("messages", [])
+
+def list_new_messages(user) -> list[dict]:
+    """
+    Return ALL Gmail messages matching the application keyword filter (paginated).
+    """
+    return _list_all_messages(_get_service(user), APPLICATION_QUERY)
+
+
+def list_rejection_messages(user) -> list[dict]:
+    """Return ALL Gmail messages matching the rejection keyword filter (paginated)."""
+    return _list_all_messages(_get_service(user), REJECTION_QUERY)
+
+
+def list_assessment_messages(user) -> list[dict]:
+    """Return ALL Gmail messages matching the assessment/coding-challenge filter (paginated)."""
+    return _list_all_messages(_get_service(user), ASSESSMENT_QUERY)
 
 
 def get_message_detail(user, message_id: str) -> dict:
@@ -138,17 +228,41 @@ def get_message_detail(user, message_id: str) -> dict:
 
 
 def _extract_body(payload: dict) -> str:
-    """Recursively extract plain-text body from a Gmail message payload."""
+    """
+    Recursively extract plain-text body from a Gmail message payload.
+    Prefers text/plain; falls back to text/html with tags stripped.
+    """
+    import re as _re
+
     mime_type = payload.get("mimeType", "")
+
     if mime_type == "text/plain":
         data = payload.get("body", {}).get("data", "")
         if data:
             return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+
     if "parts" in payload:
+        html_fallback = ""
         for part in payload["parts"]:
             text = _extract_body(part)
-            if text:
-                return text
+            if text and part.get("mimeType") == "text/plain":
+                return text  # plain text wins immediately
+            if text and not html_fallback:
+                html_fallback = text
+        if html_fallback:
+            return html_fallback
+
+    # HTML-only email: decode and strip tags
+    if mime_type == "text/html":
+        data = payload.get("body", {}).get("data", "")
+        if data:
+            html = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+            # Strip tags, collapse whitespace, decode common HTML entities
+            text = _re.sub(r"<[^>]+>", " ", html)
+            text = text.replace("&nbsp;", " ").replace("&#39;", "'") \
+                       .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+            return _re.sub(r"\s{2,}", " ", text).strip()
+
     return ""
 
 
