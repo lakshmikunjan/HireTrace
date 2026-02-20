@@ -20,6 +20,10 @@ from app.models.application import JobApplication
 from app.services import gmail as gmail_service
 from app.services.parser import parse_email
 from app.services.parser.rejection import extract_company
+from app.services.gmail import (
+    list_phone_screen_messages,
+    list_technical_messages,
+)
 
 logger = logging.getLogger("hiretrace.scanner")
 
@@ -140,13 +144,16 @@ async def _find_duplicate_application(
 async def scan_inbox(user: User, db: AsyncSession) -> int:
     """
     Scan the user's Gmail inbox for new application confirmation emails,
-    rejection emails, and assessment emails.  Also repairs any existing 2026
-    rows that are still missing company / title / location.
+    rejection emails, assessment emails, phone screen invites, and technical
+    interview invitations.  Also repairs any existing 2026 rows that are still
+    missing company / title / location.
     Returns the number of new applications saved.
     """
     new_count = await _scan_applications(user, db)
     await _scan_rejections(user, db)
     await _scan_assessments(user, db)
+    await _scan_phone_screens(user, db)
+    await _scan_technical_interviews(user, db)
     await _repair_null_fields(user, db)
 
     user.last_scan_at = datetime.now(timezone.utc)
@@ -265,12 +272,14 @@ async def _scan_applications(user: User, db: AsyncSession) -> int:
 
         # Metadata fallback 2: snippet context (first ~55 chars) so the row is
         # identifiable in the UI even when the company name can't be parsed.
-        # Not applied for platform emails (linkedin/indeed) since the platform
-        # parser already ran — the company name is simply not in these emails.
+        # Only for direct applications - never show "Indeed Apply" or "LinkedIn Apply"
         if not result.company_name and result.platform == "direct" and snippet:
             preview = snippet[:60].strip()
             if preview:
                 result.company_name = preview if len(preview) <= 55 else preview[:52].rsplit(" ", 1)[0] + "…"
+        # For platform emails, leave company_name as None rather than showing platform name
+        elif not result.company_name and result.platform in ("linkedin", "indeed"):
+            result.company_name = None
 
         # Windowed dedup: find a near-duplicate row in the ±48 h window.
         # Skip for platform emails (linkedin/indeed) — message_id exact-dedup
@@ -390,28 +399,74 @@ async def _scan_rejections(user: User, db: AsyncSession) -> None:
         matched_apps = result.scalars().all()
 
         if matched_apps:
-            for app in matched_apps:
-                app.status = "rejected"
-                app.rejected_at = received_at
-                app.last_activity_at = received_at
-                # Tag with rejection email ID to prevent reprocessing
-                if not app.email_message_id:
-                    app.email_message_id = message_id
+            # Update only the most recent matching application to avoid duplicates
+            latest_app = max(matched_apps, key=lambda app: app.applied_at or app.created_at)
+            latest_app.status = "rejected"
+            latest_app.rejected_at = received_at
+            latest_app.last_activity_at = received_at
+            # Tag with rejection email ID to prevent reprocessing
+            if not latest_app.email_message_id:
+                latest_app.email_message_id = message_id
         else:
-            # No match found — create a new rejected record so it still shows up
-            db.add(JobApplication(
-                user_id=user.id,
-                company_name=_cap(company),
-                job_title=None,
-                platform="direct",
-                status="rejected",
-                applied_at=received_at,
-                rejected_at=received_at,
-                last_activity_at=received_at,
-                email_message_id=message_id,
-                parse_confidence=0.5,
-                raw_email_snippet=detail["snippet"],
-            ))
+            # Phase 2: ilike failed — try fuzzy ratio match across all non-rejected/non-offer apps.
+            # This handles cases where the rejection email company name is slightly different
+            # (e.g. "HungerRush" vs "HungerRush, Inc.") or where the ilike pattern didn't fire.
+            fuzzy_result = await db.execute(
+                select(JobApplication).where(
+                    JobApplication.user_id == user.id,
+                    JobApplication.company_name.isnot(None),
+                    JobApplication.manually_overridden.is_(False),
+                    JobApplication.status.notin_(["rejected", "offer"]),
+                )
+            )
+            active_apps = fuzzy_result.scalars().all()
+
+            best_match = None
+            best_score = 0.0
+            for candidate in active_apps:
+                score = _fuzzy_ratio(candidate.company_name, company)
+                # Also accept clear substring containment
+                if score < 0.82 and candidate.company_name and company:
+                    cn = candidate.company_name.lower()
+                    co = company.lower()
+                    if co in cn or cn in co:
+                        score = 0.82
+                if score >= 0.82 and score > best_score:
+                    best_score = score
+                    best_match = candidate
+
+            if best_match is not None:
+                best_match.status = "rejected"
+                best_match.rejected_at = received_at
+                best_match.last_activity_at = received_at
+                if not best_match.email_message_id:
+                    best_match.email_message_id = message_id
+            else:
+                # Phase 3: Still no match — create a new rejected record as a last resort.
+                # Guard against creating a duplicate rejection for the same company within 24 h.
+                recent_window = received_at - timedelta(hours=24)
+                existing_rejection = await db.execute(
+                    select(JobApplication).where(
+                        JobApplication.user_id == user.id,
+                        JobApplication.company_name.ilike(f"%{company}%"),
+                        JobApplication.status == "rejected",
+                        JobApplication.applied_at >= recent_window,
+                    )
+                )
+                if existing_rejection.scalar_one_or_none() is None:
+                    db.add(JobApplication(
+                        user_id=user.id,
+                        company_name=_cap(company),
+                        job_title=None,
+                        platform="direct",
+                        status="rejected",
+                        applied_at=received_at,
+                        rejected_at=received_at,
+                        last_activity_at=received_at,
+                        email_message_id=message_id,
+                        parse_confidence=0.5,
+                        raw_email_snippet=detail["snippet"],
+                    ))
 
 
 # ---------------------------------------------------------------------------
@@ -464,22 +519,181 @@ async def _scan_assessments(user: User, db: AsyncSession) -> None:
         matched_apps = result.scalars().all()
 
         if matched_apps:
-            for app in matched_apps:
-                app.status = "assessment"
-                app.last_activity_at = received_at
-                if not app.email_message_id:
-                    app.email_message_id = message_id
+            # Update only the most recent matching application to avoid duplicates
+            latest_app = max(matched_apps, key=lambda app: app.applied_at or app.created_at)
+            latest_app.status = "assessment"
+            latest_app.last_activity_at = received_at
+            if not latest_app.email_message_id:
+                latest_app.email_message_id = message_id
         else:
             # No matching applied app — create a new assessment record
-            db.add(JobApplication(
-                user_id=user.id,
-                company_name=_cap(company),
-                job_title=None,
-                platform="direct",
-                status="assessment",
-                applied_at=received_at,
-                last_activity_at=received_at,
-                email_message_id=message_id,
-                parse_confidence=0.5,
-                raw_email_snippet=detail["snippet"],
-            ))
+            # But first check if we already have an assessment for this company recently
+            recent_window = received_at - timedelta(hours=24)
+            existing_assessment = await db.execute(
+                select(JobApplication).where(
+                    JobApplication.user_id == user.id,
+                    JobApplication.company_name.ilike(f"%{company}%"),
+                    JobApplication.status == "assessment",
+                    JobApplication.applied_at >= recent_window,
+                )
+            )
+            if existing_assessment.scalar_one_or_none() is None:
+                db.add(JobApplication(
+                    user_id=user.id,
+                    company_name=_cap(company),
+                    job_title=None,
+                    platform="direct",
+                    status="assessment",
+                    applied_at=received_at,
+                    last_activity_at=received_at,
+                    email_message_id=message_id,
+                    parse_confidence=0.5,
+                    raw_email_snippet=detail["snippet"],
+                ))
+
+
+# ---------------------------------------------------------------------------
+# Phone screen invite scan
+# ---------------------------------------------------------------------------
+
+async def _scan_phone_screens(user: User, db: AsyncSession) -> None:
+    """
+    Scan for recruiter / scheduling emails and advance matching 'applied'
+    applications to 'phone_screen'.
+    """
+    messages = list_phone_screen_messages(user)
+
+    for msg_ref in messages:
+        message_id = msg_ref["id"]
+
+        # Skip already-processed messages
+        dup = await db.execute(
+            select(JobApplication).where(JobApplication.email_message_id == message_id)
+        )
+        if dup.scalar_one_or_none() is not None:
+            continue
+
+        detail = gmail_service.get_message_detail(user, message_id)
+        snippet = detail["snippet"] or ""
+        html_body = detail["body"] or ""
+        body = (snippet + "\n" + html_body).strip() if snippet else html_body
+
+        company = extract_company(
+            sender=detail["sender"],
+            subject=detail["subject"],
+            body=body,
+        )
+        if not company:
+            company = _extract_display_name(detail["sender"])
+        if not company:
+            continue
+
+        received_at = detail["date"] or datetime.now(timezone.utc)
+
+        # Find the most recent matching 'applied' app and advance it
+        result = await db.execute(
+            select(JobApplication).where(
+                JobApplication.user_id == user.id,
+                JobApplication.company_name.ilike(f"%{company}%"),
+                JobApplication.manually_overridden.is_(False),
+                JobApplication.status == "applied",
+            )
+        )
+        matched = result.scalars().all()
+        if not matched:
+            # Fuzzy fallback
+            fuzzy_result = await db.execute(
+                select(JobApplication).where(
+                    JobApplication.user_id == user.id,
+                    JobApplication.company_name.isnot(None),
+                    JobApplication.manually_overridden.is_(False),
+                    JobApplication.status == "applied",
+                )
+            )
+            candidates = fuzzy_result.scalars().all()
+            best, best_score = None, 0.0
+            for c in candidates:
+                score = _fuzzy_ratio(c.company_name, company)
+                if score >= 0.82 and score > best_score:
+                    best_score, best = score, c
+            if best:
+                matched = [best]
+
+        if matched:
+            latest = max(matched, key=lambda a: a.applied_at or a.created_at)
+            latest.status = "phone_screen"
+            latest.last_activity_at = received_at
+            if not latest.email_message_id:
+                latest.email_message_id = message_id
+
+
+# ---------------------------------------------------------------------------
+# Technical interview invite scan
+# ---------------------------------------------------------------------------
+
+async def _scan_technical_interviews(user: User, db: AsyncSession) -> None:
+    """
+    Scan for technical interview invitation emails and advance matching
+    applications (applied / phone_screen / assessment) to 'technical'.
+    """
+    messages = list_technical_messages(user)
+
+    for msg_ref in messages:
+        message_id = msg_ref["id"]
+
+        dup = await db.execute(
+            select(JobApplication).where(JobApplication.email_message_id == message_id)
+        )
+        if dup.scalar_one_or_none() is not None:
+            continue
+
+        detail = gmail_service.get_message_detail(user, message_id)
+        snippet = detail["snippet"] or ""
+        html_body = detail["body"] or ""
+        body = (snippet + "\n" + html_body).strip() if snippet else html_body
+
+        company = extract_company(
+            sender=detail["sender"],
+            subject=detail["subject"],
+            body=body,
+        )
+        if not company:
+            company = _extract_display_name(detail["sender"])
+        if not company:
+            continue
+
+        received_at = detail["date"] or datetime.now(timezone.utc)
+
+        result = await db.execute(
+            select(JobApplication).where(
+                JobApplication.user_id == user.id,
+                JobApplication.company_name.ilike(f"%{company}%"),
+                JobApplication.manually_overridden.is_(False),
+                JobApplication.status.in_(["applied", "phone_screen", "assessment"]),
+            )
+        )
+        matched = result.scalars().all()
+        if not matched:
+            fuzzy_result = await db.execute(
+                select(JobApplication).where(
+                    JobApplication.user_id == user.id,
+                    JobApplication.company_name.isnot(None),
+                    JobApplication.manually_overridden.is_(False),
+                    JobApplication.status.in_(["applied", "phone_screen", "assessment"]),
+                )
+            )
+            candidates = fuzzy_result.scalars().all()
+            best, best_score = None, 0.0
+            for c in candidates:
+                score = _fuzzy_ratio(c.company_name, company)
+                if score >= 0.82 and score > best_score:
+                    best_score, best = score, c
+            if best:
+                matched = [best]
+
+        if matched:
+            latest = max(matched, key=lambda a: a.applied_at or a.created_at)
+            latest.status = "technical"
+            latest.last_activity_at = received_at
+            if not latest.email_message_id:
+                latest.email_message_id = message_id

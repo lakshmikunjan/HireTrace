@@ -2,12 +2,13 @@
 from datetime import datetime, timezone, timedelta, date
 
 from fastapi import APIRouter, Request
-from sqlalchemy import select, func
+from sqlalchemy import select, func, cast
+from sqlalchemy.types import Date as SADate
 
 from app.database import AsyncSessionLocal
 from app.models.application import JobApplication
 from app.routers.auth import require_user
-from app.schemas.application import DashboardStats
+from app.schemas.application import DashboardStats, ActivityPoint
 
 router = APIRouter()
 
@@ -19,8 +20,6 @@ async def get_stats(request: Request):
     user_id = require_user(request)
 
     now = datetime.now(timezone.utc)
-    # Rolling windows — timezone-agnostic so US users always see the right count
-    # regardless of UTC offset (avoids "midnight UTC != midnight local" edge case).
     today_start = now - timedelta(hours=24)
     week_start  = now - timedelta(days=7)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -56,6 +55,15 @@ async def get_stats(request: Request):
         )
         ghosting_count = ghosting_result.scalar() or 0
 
+        # Total applications (2026 only)
+        total_result = await db.execute(
+            select(func.count(JobApplication.id)).where(
+                JobApplication.user_id == user_id,
+                JobApplication.applied_at >= year_start,
+            )
+        )
+        total_applications = total_result.scalar() or 0
+
         # Applied today
         today_result = await db.execute(
             select(func.count(JobApplication.id)).where(
@@ -65,7 +73,7 @@ async def get_stats(request: Request):
         )
         applied_today = today_result.scalar() or 0
 
-        # Applied this week (Sunday–Saturday)
+        # Applied this week
         week_result = await db.execute(
             select(func.count(JobApplication.id)).where(
                 JobApplication.user_id == user_id,
@@ -74,7 +82,7 @@ async def get_stats(request: Request):
         )
         applied_this_week = week_result.scalar() or 0
 
-        # Applied this month (1st of current month to now)
+        # Applied this month
         month_result = await db.execute(
             select(func.count(JobApplication.id)).where(
                 JobApplication.user_id == user_id,
@@ -87,7 +95,30 @@ async def get_stats(request: Request):
         funnel=funnel,
         platform_breakdown=platform_breakdown,
         ghosting_count=ghosting_count,
+        total_applications=total_applications,
         applied_today=applied_today,
         applied_this_week=applied_this_week,
         applied_this_month=applied_this_month,
     )
+
+
+@router.get("/activity", response_model=list[ActivityPoint])
+async def get_activity(request: Request):
+    """Daily application counts since the start of 2026."""
+    user_id = require_user(request)
+    year_start = date(2026, 1, 1)
+
+    async with AsyncSessionLocal() as db:
+        day_col = cast(JobApplication.applied_at, SADate).label("day")
+        result = await db.execute(
+            select(day_col, func.count(JobApplication.id).label("cnt"))
+            .where(
+                JobApplication.user_id == user_id,
+                JobApplication.applied_at >= year_start,
+            )
+            .group_by(day_col)
+            .order_by(day_col)
+        )
+        rows = result.all()
+
+    return [ActivityPoint(date=str(row.day), count=row.cnt) for row in rows]

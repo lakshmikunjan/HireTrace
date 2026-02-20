@@ -1,9 +1,11 @@
 import axios from "axios";
 import type {
   Application,
+  ActivityPoint,
   ApplicationFilters,
   ApplicationStatus,
   DashboardStats,
+  InterviewStageUpdate,
   User,
 } from "./types";
 
@@ -35,6 +37,24 @@ export const updateStatus = (
 ): Promise<Application> =>
   api.patch<Application>(`/applications/${id}`, { status }).then((r) => r.data);
 
+export const updateInterviewStages = (
+  id: string,
+  stages: InterviewStageUpdate
+): Promise<Application> =>
+  api.patch<Application>(`/applications/${id}/interview-stages`, stages).then((r) => r.data);
+
+export const updateFields = (
+  id: string,
+  fields: { company_name?: string | null; job_title?: string | null; location?: string | null }
+): Promise<Application> =>
+  api.patch<Application>(`/applications/${id}/fields`, fields).then((r) => r.data);
+
+export const fetchPotentialDuplicates = (): Promise<Application[][]> =>
+  api.get<Application[][]>("/applications/potential-duplicates").then((r) => r.data);
+
+export const autoCleanDuplicates = (): Promise<{ merged_orphans: number; deleted_dupes: number }> =>
+  api.post("/applications/auto-clean-duplicates").then((r) => r.data);
+
 export const deleteApplication = (id: string): Promise<void> =>
   api.delete(`/applications/${id}`).then(() => undefined);
 
@@ -47,3 +67,6 @@ export const deleteAccount = (): Promise<void> =>
 // Dashboard
 export const fetchStats = (): Promise<DashboardStats> =>
   api.get<DashboardStats>("/dashboard/stats").then((r) => r.data);
+
+export const fetchActivity = (): Promise<ActivityPoint[]> =>
+  api.get<ActivityPoint[]>("/dashboard/activity").then((r) => r.data);

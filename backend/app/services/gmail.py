@@ -12,6 +12,7 @@ from app.config import settings
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
     "openid",
     "email",
 ]
@@ -77,6 +78,33 @@ ASSESSMENT_QUERY = (
     '"take-home" OR '
     '"invited to complete" OR '
     '"next steps" "assessment") after:2026/01/01'
+)
+
+# Gmail search query to find phone screen / recruiter scheduling emails (2026 only)
+PHONE_SCREEN_QUERY = (
+    '("schedule a call" OR '
+    '"phone screen" OR '
+    '"phone interview" OR '
+    '"recruiter call" OR '
+    '"introductory call" OR '
+    '"we would like to speak with you" OR '
+    '"we would like to chat" OR '
+    '"we\'d like to connect" OR '
+    '"book a time" OR '
+    '"schedule time with") '
+    '-("thank you for applying" OR "application received" OR "application submitted") '
+    'after:2026/01/01'
+)
+
+# Gmail search query to find technical interview invitation emails (2026 only)
+TECHNICAL_QUERY = (
+    '("technical interview" OR '
+    '"virtual onsite" OR '
+    '"engineering interview" OR '
+    '"we would like to invite you for an interview" OR '
+    '"invite you to interview") '
+    '-("assessment" OR "coding challenge" OR "HackerRank" OR "Codility" OR "CodeSignal") '
+    'after:2026/01/01'
 )
 
 
@@ -196,6 +224,38 @@ def list_assessment_messages(user) -> list[dict]:
     return _list_all_messages(_get_service(user), ASSESSMENT_QUERY)
 
 
+def list_phone_screen_messages(user) -> list[dict]:
+    """Return Gmail messages that look like phone screen / scheduling invites."""
+    return _list_all_messages(_get_service(user), PHONE_SCREEN_QUERY)
+
+
+def list_technical_messages(user) -> list[dict]:
+    """Return Gmail messages that look like technical interview invitations."""
+    return _list_all_messages(_get_service(user), TECHNICAL_QUERY)
+
+
+def send_digest_email(user, html_body: str) -> None:
+    """
+    Send an HTML email to the user via the Gmail API.
+    Requires the gmail.send scope — fails gracefully if the token predates
+    that scope (user must re-authenticate once to grant it).
+    """
+    import base64
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Your Weekly HireTrace Digest"
+    msg["From"] = f"HireTrace <{user.email}>"
+    msg["To"] = user.email
+    msg.attach(MIMEText(html_body, "html"))
+
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    _get_service(user).users().messages().send(
+        userId="me", body={"raw": raw}
+    ).execute()
+
+
 def get_message_detail(user, message_id: str) -> dict:
     """
     Fetch full message detail (headers + body) for a given Gmail message ID.
@@ -257,11 +317,21 @@ def _extract_body(payload: dict) -> str:
         data = payload.get("body", {}).get("data", "")
         if data:
             html = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
-            # Strip tags, collapse whitespace, decode common HTML entities
+            # Convert block-level tags to newlines BEFORE stripping, so the
+            # parsers see line-separated text (e.g. "Insomniac Hedge Fund Guy\n- Remote")
+            # rather than one long line where the company regex over-captures.
+            html = _re.sub(
+                r"</?(?:br|p|div|tr|td|th|li|h[1-6])\b[^>]*>",
+                "\n", html, flags=_re.IGNORECASE,
+            )
+            # Strip remaining tags
             text = _re.sub(r"<[^>]+>", " ", html)
-            text = text.replace("&nbsp;", " ").replace("&#39;", "'") \
-                       .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-            return _re.sub(r"\s{2,}", " ", text).strip()
+            # Decode common HTML entities
+            text = (text.replace("&nbsp;", " ").replace("&#39;", "'")
+                        .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">"))
+            # Clean up each line individually, then drop blank lines
+            lines = [_re.sub(r" {2,}", " ", line).strip() for line in text.split("\n")]
+            return "\n".join(line for line in lines if line)
 
     return ""
 

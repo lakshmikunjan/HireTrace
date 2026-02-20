@@ -11,6 +11,7 @@ export function DailyDigest() {
     <div className="flex items-center gap-3 bg-brand-50 border border-brand-100 rounded-lg px-4 py-3 text-sm text-brand-700">
       <TrendingUp className="w-4 h-4 shrink-0" />
       <span>
+        Total 2026: <strong>{stats.total_applications}</strong>.{" "}
         Last 24 hrs: <strong>{stats.applied_today}</strong>.{" "}
         Last 7 days: <strong>{stats.applied_this_week}</strong>.{" "}
         This month: <strong>{stats.applied_this_month}</strong>.

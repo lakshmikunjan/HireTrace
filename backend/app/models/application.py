@@ -26,12 +26,28 @@ class JobApplication(Base):
     # 'linkedin' | 'indeed' | 'direct'
     platform: Mapped[str] = mapped_column(String(50), nullable=False, default="direct")
 
-    # 'applied' | 'phone_screen' | 'technical' | 'offer' | 'rejected' | 'ghosted'
+    # 'applied' | 'phone_screen' | 'assessment' | 'technical' | 'offer' | 'rejected' | 'ghosted'
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="applied")
 
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Manual tracking for interview stages
+    phone_screen_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    phone_screen_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    phone_screen_scheduled: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    phone_screen_missed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    assessment_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    assessment_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    assessment_scheduled: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    assessment_missed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    technical_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    technical_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    technical_scheduled: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    technical_missed: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Gmail message ID used for deduplication
     email_message_id: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
