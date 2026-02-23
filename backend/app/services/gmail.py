@@ -61,9 +61,15 @@ REJECTION_QUERY = (
     '"not be moving forward" OR '
     '"unable to move forward" OR '
     '"not be proceeding" OR '
+    '"won\'t be proceeding" OR '
+    '"will not be proceeding" OR '
+    '"not moving forward" OR '
     '"have filled this position" OR '
     '"decided to go in a different direction" OR '
-    '"chosen to move forward with another") after:2026/01/01'
+    '"chosen to move forward with another" OR '
+    '"unfortunately" "application" OR '
+    '"not selected to move" OR '
+    '"we have decided not to") after:2026/01/01'
 )
 
 # Gmail search query to find assessment/coding challenge emails (2026 only)
