@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { LogOut, Settings as SettingsIcon, LayoutDashboard, BarChart2 } from "lucide-react";
+import { LogOut, Settings as SettingsIcon, LayoutDashboard, BarChart2, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend,
@@ -186,6 +186,75 @@ export function Stats() {
       .slice(0, 10);
   }, [applications]);
 
+  // Platform outcome breakdown (positive = phone_screen + assessment + technical + offer)
+  const platformOutcomes = useMemo(() => {
+    const map: Record<string, { total: number; phone_screen: number; assessment: number; technical: number; offer: number }> = {};
+    applications.forEach((a) => {
+      const p = a.platform;
+      if (!map[p]) map[p] = { total: 0, phone_screen: 0, assessment: 0, technical: 0, offer: 0 };
+      map[p].total++;
+      if (a.status === "phone_screen") map[p].phone_screen++;
+      else if (a.status === "assessment") map[p].assessment++;
+      else if (a.status === "technical")  map[p].technical++;
+      else if (a.status === "offer")      map[p].offer++;
+    });
+    return Object.entries(map)
+      .sort(([, a], [, b]) => b.total - a.total)
+      .map(([platform, d]) => {
+        const positive = d.phone_screen + d.assessment + d.technical + d.offer;
+        return {
+          platform,
+          label: platform.charAt(0).toUpperCase() + platform.slice(1),
+          color: PLATFORM_COLORS[platform] ?? "#9ca3af",
+          ...d,
+          positive,
+          rate: d.total > 0 ? Math.round((positive / d.total) * 100) : 0,
+        };
+      });
+  }, [applications]);
+
+  const bestPlatform = platformOutcomes.reduce<string | null>(
+    (best, p) => (p.total >= 10 && (!best || p.rate > (platformOutcomes.find(x => x.platform === best)?.rate ?? -1))) ? p.platform : best,
+    null,
+  );
+
+  // Monthly response rate trend
+  const monthlyTrend = useMemo(() => {
+    const map: Record<string, { applied: number; responded: number }> = {};
+    applications.forEach((a) => {
+      if (!a.applied_at) return;
+      const month = a.applied_at.slice(0, 7);
+      if (!map[month]) map[month] = { applied: 0, responded: 0 };
+      map[month].applied++;
+      if (["phone_screen", "assessment", "technical", "offer", "rejected"].includes(a.status))
+        map[month].responded++;
+    });
+    return Object.entries(map)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, { applied, responded }]) => ({
+        month,
+        label: new Date(month + "-15").toLocaleDateString(undefined, { month: "short", year: "2-digit" }),
+        applied,
+        responded,
+        rate: applied > 0 ? parseFloat((responded / applied * 100).toFixed(1)) : 0,
+      }));
+  }, [applications]);
+
+  const trendSignal = useMemo(() => {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const complete = monthlyTrend.filter((m) => m.month < currentMonth);
+    if (complete.length < 2) return null;
+    const last = complete[complete.length - 1];
+    const prev = complete[complete.length - 2];
+    const delta = parseFloat((last.rate - prev.rate).toFixed(1));
+    return {
+      delta,
+      direction: delta > 1 ? "up" : delta < -1 ? "down" : ("flat" as const),
+      lastLabel: last.label,
+      prevLabel: prev.label,
+    };
+  }, [monthlyTrend]);
+
   // ── render ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
@@ -294,43 +363,115 @@ export function Stats() {
           )}
         </div>
 
+        {/* Response rate trend */}
+        {monthlyTrend.length >= 2 && (
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-700">Response Rate Trend</h2>
+                <p className="text-xs text-gray-400 mt-0.5">Monthly % of applications that got any response</p>
+              </div>
+              {trendSignal && (
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold ${
+                  trendSignal.direction === "up"   ? "bg-green-50 text-green-700" :
+                  trendSignal.direction === "down" ? "bg-red-50 text-red-600"    :
+                                                     "bg-gray-100 text-gray-500"
+                }`}>
+                  {trendSignal.direction === "up"   && <TrendingUp className="w-3.5 h-3.5" />}
+                  {trendSignal.direction === "down" && <TrendingDown className="w-3.5 h-3.5" />}
+                  {trendSignal.direction === "flat" && <Minus className="w-3.5 h-3.5" />}
+                  {trendSignal.direction === "up"   && `Market improving  +${trendSignal.delta}pp`}
+                  {trendSignal.direction === "down" && `Market cooling  ${trendSignal.delta}pp`}
+                  {trendSignal.direction === "flat" && "Market stable"}
+                  <span className="font-normal text-[10px] opacity-70 ml-1">
+                    ({trendSignal.prevLabel} → {trendSignal.lastLabel})
+                  </span>
+                </div>
+              )}
+            </div>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={monthlyTrend} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#94a3b8" }} />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fontSize: 11, fill: "#94a3b8" }}
+                  tickFormatter={(v) => `${v}%`}
+                  domain={[0, "auto"]}
+                />
+                <Tooltip
+                  formatter={(v: number, _: string, props: { payload?: { applied?: number; responded?: number } }) => [
+                    `${v}%  (${props.payload?.responded ?? 0} of ${props.payload?.applied ?? 0})`,
+                    "Response rate",
+                  ]}
+                  contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="rate"
+                  stroke="#10b981"
+                  strokeWidth={2.5}
+                  dot={{ r: 4, fill: "#10b981", strokeWidth: 0 }}
+                  activeDot={{ r: 6 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+            <p className="text-[10px] text-gray-300 mt-2 text-right">
+              Current month excluded from trend — responses still incoming
+            </p>
+          </div>
+        )}
+
         {/* Platform + Stage conversion */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-          {/* Platform breakdown */}
+          {/* Platform outcomes */}
           <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <h2 className="text-sm font-semibold text-gray-700 mb-4">Platform Breakdown</h2>
-            {platformData.length > 0 ? (
-              <>
-                <ResponsiveContainer width="100%" height={180}>
-                  <BarChart
-                    data={platformData}
-                    layout="vertical"
-                    margin={{ top: 0, right: 24, left: 0, bottom: 0 }}
-                  >
-                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "#94a3b8" }} />
-                    <YAxis type="category" dataKey="platform" tick={{ fontSize: 12, fill: "#374151" }} width={72} />
-                    <Tooltip
-                      formatter={(v: number, name: string) => [v, name === "total" ? "Applied" : "Responded"]}
-                      contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
-                    />
-                    <Bar dataKey="total" name="total" radius={[0, 4, 4, 0]} fill="#e2e8f0" />
-                    <Bar dataKey="responded" name="responded" radius={[0, 4, 4, 0]}>
-                      {platformData.map((entry) => (
-                        <Cell key={entry.platform} fill={entry.color} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-                <div className="mt-3 flex flex-wrap gap-3">
-                  {platformData.map((p) => (
-                    <div key={p.platform} className="text-xs text-gray-500">
-                      <span className="font-medium text-gray-700">{p.platform}</span>
-                      {" — "}{p.responseRate}% response rate
+            <h2 className="text-sm font-semibold text-gray-700 mb-1">Platform Outcomes</h2>
+            <p className="text-xs text-gray-400 mb-4">Which platform leads to positive results</p>
+            {platformOutcomes.length > 0 ? (
+              <div className="space-y-4">
+                {platformOutcomes.map((p) => (
+                  <div key={p.platform}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
+                        <span className="text-sm font-semibold text-gray-800">{p.label}</span>
+                        {bestPlatform === p.platform && (
+                          <span className="text-[10px] font-bold bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">BEST</span>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <span className={`text-sm font-bold ${p.rate >= 10 ? "text-green-600" : p.rate >= 5 ? "text-blue-600" : "text-gray-500"}`}>
+                          {p.rate}%
+                        </span>
+                        <span className="text-xs text-gray-400 ml-1">win rate</span>
+                      </div>
                     </div>
-                  ))}
-                </div>
-              </>
+                    {/* Stage breakdown pills */}
+                    <div className="flex gap-2 flex-wrap ml-4 mb-1">
+                      {[
+                        { key: "phone_screen", label: "Phone", color: "bg-purple-100 text-purple-700", val: p.phone_screen },
+                        { key: "assessment",   label: "Assessment", color: "bg-orange-100 text-orange-700", val: p.assessment },
+                        { key: "technical",    label: "Technical", color: "bg-yellow-100 text-yellow-700", val: p.technical },
+                        { key: "offer",        label: "Offer", color: "bg-green-100 text-green-700", val: p.offer },
+                      ].map(({ key, label, color, val }) => (
+                        <span key={key} className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${color}`}>
+                          {label}: {val} ({p.total > 0 ? Math.round(val / p.total * 100) : 0}%)
+                        </span>
+                      ))}
+                    </div>
+                    {/* Win rate bar */}
+                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden ml-4">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, p.rate * 4)}%`, backgroundColor: p.color }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-gray-400 ml-4 mt-0.5">{p.total} applications</p>
+                  </div>
+                ))}
+              </div>
             ) : (
               <div className="h-[180px] flex items-center justify-center text-gray-300 text-sm">No data</div>
             )}
