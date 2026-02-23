@@ -31,6 +31,7 @@ export function Dashboard() {
   const [showDuplicates,  setShowDuplicates]  = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [searchQuery,     setSearchQuery]     = useState("");
+  const [scanResult, setScanResult] = useState<{ new_applications: number; emails_checked: number } | null>(null);
   // After auto-clean runs: store the result to show a summary
   const [cleanResult, setCleanResult] = useState<{ merged_orphans: number; deleted_dupes: number } | null>(null);
 
@@ -75,14 +76,25 @@ export function Dashboard() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => scan.mutate()}
-            disabled={scan.isPending}
-            className="flex items-center gap-2 text-sm bg-brand-600 hover:bg-brand-700 text-white rounded-lg px-4 py-2 transition-colors disabled:opacity-60"
-          >
-            <RefreshCw className={`w-4 h-4 ${scan.isPending ? "animate-spin" : ""}`} />
-            {scan.isPending ? "Scanning…" : "Scan Now"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => scan.mutate(undefined, { onSuccess: (r) => setScanResult(r) })}
+              disabled={scan.isPending}
+              className="flex items-center gap-2 text-sm bg-brand-600 hover:bg-brand-700 text-white rounded-lg px-4 py-2 transition-colors disabled:opacity-60"
+            >
+              <RefreshCw className={`w-4 h-4 ${scan.isPending ? "animate-spin" : ""}`} />
+              {scan.isPending ? "Scanning…" : "Scan Now"}
+            </button>
+            {/* Show scan result for a few seconds after completing */}
+            {!scan.isPending && scanResult !== null && (
+              <span className="text-xs text-gray-500">
+                {scanResult.new_applications > 0
+                  ? <span className="text-green-600 font-medium">+{scanResult.new_applications} new</span>
+                  : <span>{scanResult.emails_checked} emails checked, 0 new</span>
+                }
+              </span>
+            )}
+          </div>
           <Link
             to="/stats"
             className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 px-3 py-2 rounded-lg transition-colors"

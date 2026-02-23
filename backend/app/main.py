@@ -43,9 +43,10 @@ async def _periodic_scan_all_users() -> None:
                     async with AsyncSessionLocal() as db:
                         user = await db.get(User, uid)
                         if user:
-                            new_count = await scan_inbox(user, db)
+                            new_count, emails_checked = await scan_inbox(user, db)
                             logger.info(
-                                "Periodic scan done for %s — %d new", user.email, new_count
+                                "Periodic scan done for %s — %d new (%d emails checked)",
+                                user.email, new_count, emails_checked,
                             )
                 except Exception:
                     logger.exception("Periodic scan failed for user %s", uid)

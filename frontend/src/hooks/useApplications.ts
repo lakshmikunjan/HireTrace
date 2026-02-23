@@ -87,22 +87,11 @@ export function useTriggerScan() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: triggerScan,
-    onSuccess: async () => {
-      // Poll last_scan_at until it changes (background task completed),
-      // then refresh application data. Give up after ~60 seconds.
-      const baseline = await fetchMe().then((u) => u.last_scan_at).catch(() => null);
-      let attempts = 0;
-      const poll = async () => {
-        attempts++;
-        const current = await fetchMe().then((u) => u.last_scan_at).catch(() => null);
-        if (current !== baseline || attempts >= 20) {
-          qc.invalidateQueries({ queryKey: ["applications"] });
-          qc.invalidateQueries({ queryKey: ["stats"] });
-        } else {
-          setTimeout(poll, 3000);
-        }
-      };
-      setTimeout(poll, 4000); // first check after 4 seconds
+    onSuccess: () => {
+      // Scan is now synchronous — refresh everything immediately
+      qc.invalidateQueries({ queryKey: ["applications"] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
+      qc.invalidateQueries({ queryKey: ["recent-updates"] });
     },
   });
 }

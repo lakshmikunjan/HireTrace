@@ -141,15 +141,15 @@ async def _find_duplicate_application(
 # Public entry point
 # ---------------------------------------------------------------------------
 
-async def scan_inbox(user: User, db: AsyncSession) -> int:
+async def scan_inbox(user: User, db: AsyncSession) -> tuple[int, int]:
     """
     Scan the user's Gmail inbox for new application confirmation emails,
     rejection emails, assessment emails, phone screen invites, and technical
     interview invitations.  Also repairs any existing 2026 rows that are still
     missing company / title / location.
-    Returns the number of new applications saved.
+    Returns (new_applications_saved, emails_checked).
     """
-    new_count = await _scan_applications(user, db)
+    new_count, emails_checked = await _scan_applications(user, db)
     await _scan_rejections(user, db)
     await _scan_assessments(user, db)
     await _scan_phone_screens(user, db)
@@ -159,7 +159,7 @@ async def scan_inbox(user: User, db: AsyncSession) -> int:
     user.last_scan_at = datetime.now(timezone.utc)
     await db.commit()
 
-    return new_count
+    return new_count, emails_checked
 
 
 # ---------------------------------------------------------------------------
@@ -228,10 +228,13 @@ async def _repair_null_fields(user: User, db: AsyncSession) -> None:
 # Application confirmation scan
 # ---------------------------------------------------------------------------
 
-async def _scan_applications(user: User, db: AsyncSession) -> int:
-    """Scan for application confirmation emails and create new records."""
+async def _scan_applications(user: User, db: AsyncSession) -> tuple[int, int]:
+    """Scan for application confirmation emails and create new records.
+    Returns (new_count, emails_checked).
+    """
     messages = gmail_service.list_new_messages(user)
-    logger.info("Gmail returned %d messages for %s", len(messages), user.email)
+    emails_checked = len(messages)
+    logger.info("Gmail returned %d messages for %s", emails_checked, user.email)
     new_count = 0
 
     for msg_ref in messages:
@@ -336,7 +339,7 @@ async def _scan_applications(user: User, db: AsyncSession) -> int:
             # Concurrent scan already inserted this message — skip it
             pass
 
-    return new_count
+    return new_count, emails_checked
 
 
 # ---------------------------------------------------------------------------

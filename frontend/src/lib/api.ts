@@ -59,8 +59,8 @@ export const autoCleanDuplicates = (): Promise<{ merged_orphans: number; deleted
 export const deleteApplication = (id: string): Promise<void> =>
   api.delete(`/applications/${id}`).then(() => undefined);
 
-export const triggerScan = (): Promise<void> =>
-  api.post("/applications/scan").then(() => undefined);
+export const triggerScan = (): Promise<{ new_applications: number; emails_checked: number }> =>
+  api.post("/applications/scan").then((r) => r.data);
 
 export const deleteAccount = (): Promise<void> =>
   api.delete("/applications/users/me").then(() => undefined);
