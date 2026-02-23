@@ -21,7 +21,11 @@ async def get_stats(request: Request):
 
     now = datetime.now(timezone.utc)
     today_start = now - timedelta(hours=24)
-    week_start  = now - timedelta(days=7)
+    # Calendar week: always start from this Monday at midnight UTC
+    days_since_monday = now.weekday()  # Monday=0, Sunday=6
+    week_start = (now - timedelta(days=days_since_monday)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     year_start  = date(2026, 1, 1)
 
@@ -114,7 +118,7 @@ async def get_recent_updates(request: Request):
             .where(
                 JobApplication.user_id == user_id,
                 JobApplication.last_activity_at >= today_midnight,
-                JobApplication.status.in_(["rejected", "phone_screen", "assessment", "technical", "offer"]),
+                JobApplication.status.in_(["applied", "rejected", "phone_screen", "assessment", "technical", "offer"]),
             )
             .order_by(JobApplication.last_activity_at.desc())
         )
