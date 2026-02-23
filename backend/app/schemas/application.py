@@ -82,3 +82,12 @@ class DashboardStats(BaseModel):
 class ActivityPoint(BaseModel):
     date: str   # "YYYY-MM-DD"
     count: int
+
+
+class RecentUpdate(BaseModel):
+    company_name: str | None
+    job_title: str | None
+    status: str
+    last_activity_at: datetime | None
+
+    model_config = {"from_attributes": True}

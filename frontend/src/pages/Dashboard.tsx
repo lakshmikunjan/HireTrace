@@ -9,6 +9,7 @@ import { useAuth } from "../hooks/useAuth";
 import { ApplicationTable } from "../components/ApplicationTable";
 import { FunnelChart } from "../components/FunnelChart";
 import { DailyDigest } from "../components/DailyDigest";
+import { TodayUpdates } from "../components/TodayUpdates";
 import { DuplicateReviewModal } from "../components/DuplicateReviewModal";
 import { Filters } from "../components/Filters";
 import type { ApplicationFilters } from "../lib/types";
@@ -115,6 +116,9 @@ export function Dashboard() {
       <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
         {/* Daily digest */}
         <DailyDigest />
+
+        {/* Today's updates — only shown when there are events */}
+        <TodayUpdates />
 
         {/* Duplicate banner */}
         {!bannerDismissed && (duplicateGroups.length > 0 || cleanResult) && (

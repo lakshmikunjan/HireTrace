@@ -69,6 +69,13 @@ export interface ApplicationFilters {
   has_salary?: boolean;
 }
 
+export interface RecentUpdate {
+  company_name: string | null;
+  job_title: string | null;
+  status: ApplicationStatus;
+  last_activity_at: string | null;
+}
+
 export interface InterviewStageUpdate {
   phone_screen_completed?: boolean;
   phone_screen_scheduled?: string;

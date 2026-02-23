@@ -8,7 +8,7 @@ from sqlalchemy.types import Date as SADate
 from app.database import AsyncSessionLocal
 from app.models.application import JobApplication
 from app.routers.auth import require_user
-from app.schemas.application import DashboardStats, ActivityPoint
+from app.schemas.application import DashboardStats, ActivityPoint, RecentUpdate
 
 router = APIRouter()
 
@@ -100,6 +100,27 @@ async def get_stats(request: Request):
         applied_this_week=applied_this_week,
         applied_this_month=applied_this_month,
     )
+
+
+@router.get("/recent-updates", response_model=list[RecentUpdate])
+async def get_recent_updates(request: Request):
+    """Return applications whose status advanced today (rejections, phone screens, assessments, technical, offers)."""
+    user_id = require_user(request)
+    today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(JobApplication)
+            .where(
+                JobApplication.user_id == user_id,
+                JobApplication.last_activity_at >= today_midnight,
+                JobApplication.status.in_(["rejected", "phone_screen", "assessment", "technical", "offer"]),
+            )
+            .order_by(JobApplication.last_activity_at.desc())
+        )
+        apps = result.scalars().all()
+
+    return [RecentUpdate.model_validate(a) for a in apps]
 
 
 @router.get("/activity", response_model=list[ActivityPoint])

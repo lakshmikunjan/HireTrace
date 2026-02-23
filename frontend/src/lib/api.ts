@@ -6,6 +6,7 @@ import type {
   ApplicationStatus,
   DashboardStats,
   InterviewStageUpdate,
+  RecentUpdate,
   User,
 } from "./types";
 
@@ -70,3 +71,6 @@ export const fetchStats = (): Promise<DashboardStats> =>
 
 export const fetchActivity = (): Promise<ActivityPoint[]> =>
   api.get<ActivityPoint[]>("/dashboard/activity").then((r) => r.data);
+
+export const fetchRecentUpdates = (): Promise<RecentUpdate[]> =>
+  api.get<RecentUpdate[]>("/dashboard/recent-updates").then((r) => r.data);
