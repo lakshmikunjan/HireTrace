@@ -36,24 +36,60 @@ def _cap(val: str | None, limit: int = 250) -> str | None:
     return val[:limit] if val else None
 
 
+_GENERIC_EXACT = {
+    "no-reply", "noreply", "do not reply", "donotreply",
+    "notifications", "notification", "mailer", "support",
+    "jobs", "recruiting", "recruitment", "talent", "careers",
+    "hiring", "hr", "team", "alerts", "info", "hello",
+    "indeed", "linkedin", "glassdoor",
+}
+# Platform names that should be rejected even as substrings (e.g. "Indeed Apply", "Indeed Talent Acquisition")
+_PLATFORM_SUBSTR = {"indeed", "linkedin", "glassdoor"}
+# Person name pattern: "Firstname Lastname" — likely a recruiter, not a company
+_PERSON_NAME_RE = re.compile(r"^[A-Z][a-z]+(?:-[A-Z][a-z]+)? [A-Z][a-z]+(?:-[A-Z][a-z]+)?$")
+
+# Snippet text that starts with a greeting is not a company name
+_GREETING_RE = re.compile(
+    r"^(?:dear\b|hi\b|hello\b|thank(?:s|\s+you)\b|we\s+(?:are|have|wanted|hope|appreciate|regret)\b|"
+    r"congratulations\b|following\s+up\b|i\s+hope\b|you\s+(?:are|have)\b|as\s+a\b|after\s+careful\b|"
+    r"we\s+received\b|your\s+application\s+has\b)",
+    re.IGNORECASE,
+)
+
+# Strong rejection signals — skip these in _scan_applications; _scan_rejections handles them
+_REJECTION_SIGNALS = [
+    "won't be proceeding", "will not be proceeding",
+    "not be proceeding", "not moving forward",
+    "not be moving forward", "not selected to move",
+    "we have decided not to", "regret to inform you",
+    "position has been filled", "not selected for this",
+    "not be continuing with your application",
+    "after careful consideration, we",
+    "unfortunately, we will not",
+    "unfortunately we will not",
+]
+
+
 def _extract_display_name(from_header: str) -> str | None:
     """
     Parse the display name from a 'From' header.
     e.g.  '"Google Recruiting" <noreply@google.com>'  →  'Google Recruiting'
-    Returns None for generic/noise sender names.
+    Returns None for generic/noise sender names, platform names, or recruiter names.
     """
-    _GENERIC = {
-        "no-reply", "noreply", "do not reply", "donotreply",
-        "notifications", "notification", "mailer", "support",
-        "jobs", "recruiting", "recruitment", "talent", "careers",
-        "hiring", "hr", "team", "alerts", "info", "hello",
-        "indeed", "linkedin", "glassdoor",
-    }
     display, _ = parseaddr(from_header)
     display = display.strip().strip('"').strip("'")
     if not display or len(display) < 3:
         return None
-    if display.lower() in _GENERIC:
+    lower = display.lower()
+    if lower in _GENERIC_EXACT:
+        return None
+    # Reject names that contain platform identifiers as substrings
+    # (e.g. "Indeed Apply", "Indeed Talent Acquisition", "LinkedIn Jobs")
+    if any(p in lower for p in _PLATFORM_SUBSTR):
+        return None
+    # Reject names that look like a person (e.g. "Pablo Garcia") — these are
+    # recruiter names from direct emails, not company names.
+    if _PERSON_NAME_RE.match(display):
         return None
     return display
 
@@ -232,6 +268,16 @@ async def _repair_null_fields(user: User, db: AsyncSession) -> None:
                 if display:
                     parsed.company_name = display
 
+            # Snippet fallback — only if it doesn't look like greeting text
+            if not parsed.company_name and snippet:
+                preview = snippet[:60].strip()
+                if preview and not _GREETING_RE.match(preview):
+                    parsed.company_name = preview if len(preview) <= 55 else preview[:52].rsplit(" ", 1)[0] + "…"
+
+            # Discard implausibly short job titles
+            if parsed.job_title and len(parsed.job_title.strip()) <= 2:
+                parsed.job_title = None
+
             # Only fill genuinely null fields — preserve existing data
             if parsed.company_name and not row.company_name:
                 row.company_name = _cap(parsed.company_name)
@@ -281,6 +327,12 @@ async def _scan_applications(user: User, db: AsyncSession, after_date: str = "af
         html_body = detail["body"] or ""
         body = (snippet + "\n" + html_body).strip() if snippet else html_body
 
+        # Skip emails that are clearly rejections — _scan_rejections handles them.
+        # This prevents rejection body text from being stored as bad application data.
+        body_lower = body.lower()
+        if any(sig in body_lower for sig in _REJECTION_SIGNALS):
+            continue
+
         result = parse_email(
             sender=detail["sender"],
             subject=detail["subject"],
@@ -297,10 +349,11 @@ async def _scan_applications(user: User, db: AsyncSession, after_date: str = "af
 
         # Metadata fallback 2: snippet context (first ~55 chars) so the row is
         # identifiable in the UI even when the company name can't be parsed.
-        # Only for direct applications - never show "Indeed Apply" or "LinkedIn Apply"
+        # Only for direct applications - never show "Indeed Apply" or "LinkedIn Apply".
+        # Skip if the snippet starts with a greeting (it's email body text, not a name).
         if not result.company_name and result.platform == "direct" and snippet:
             preview = snippet[:60].strip()
-            if preview:
+            if preview and not _GREETING_RE.match(preview):
                 result.company_name = preview if len(preview) <= 55 else preview[:52].rsplit(" ", 1)[0] + "…"
         # For platform emails, leave company_name as None rather than showing platform name
         elif not result.company_name and result.platform in ("linkedin", "indeed"):
@@ -337,6 +390,10 @@ async def _scan_applications(user: User, db: AsyncSession, after_date: str = "af
 
         # Status detection: confirmation emails sometimes invite a call/interview
         status = _detect_status_from_body(body)
+
+        # Discard implausibly short job titles (e.g. "a", "PM" parsed from noise)
+        if result.job_title and len(result.job_title.strip()) <= 2:
+            result.job_title = None
 
         app = JobApplication(
             user_id=user.id,

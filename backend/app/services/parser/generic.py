@@ -196,7 +196,14 @@ def parse(sender: str, subject: str, body: str) -> ParseResult:
     if not result.job_title:
         m = _APPLICATION_FOR_ROLE.search(body) or _APPLICATION_FOR_ROLE.search(subject)
         if m:
-            result.job_title = m.group(1).strip()
+            candidate = m.group(1).strip()
+            # Reject sentence fragments masquerading as job titles.
+            # Real titles are short (≤7 words) and don't start with pronouns/fillers.
+            word_count = len(candidate.split())
+            if (word_count <= 7 and
+                    not re.match(r'^(?:this|our|your|the\s+(?:role|search|position|company))\b',
+                                 candidate, re.IGNORECASE)):
+                result.job_title = candidate
 
     # 9. Labelled: "Job Title: ..."
     if not result.job_title:
