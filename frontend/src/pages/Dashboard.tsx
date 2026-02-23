@@ -21,7 +21,7 @@ export function Dashboard() {
   const { data: stats } = useQuery({
     queryKey: ["stats"],
     queryFn: fetchStats,
-    refetchInterval: 2 * 60 * 1000,
+    refetchInterval: 30 * 1000,
     refetchOnWindowFocus: true,
   });
   const scan       = useTriggerScan();

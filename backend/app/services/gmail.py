@@ -213,31 +213,38 @@ def _get_service(user):
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 
-def list_new_messages(user) -> list[dict]:
+def _with_date(query: str, after_date: str) -> str:
+    """Replace the after:YYYY/MM/DD token in a query with a new date filter."""
+    import re as _re
+    return _re.sub(r"after:\d{4}/\d{2}/\d{2}", after_date, query)
+
+
+def list_new_messages(user, after_date: str = "after:2026/01/01") -> list[dict]:
     """
-    Return ALL Gmail messages matching the application keyword filter (paginated).
+    Return Gmail messages matching the application keyword filter (paginated).
+    Pass after_date (e.g. 'after:2026/02/20') to restrict to recent emails only.
     """
-    return _list_all_messages(_get_service(user), APPLICATION_QUERY)
+    return _list_all_messages(_get_service(user), _with_date(APPLICATION_QUERY, after_date))
 
 
-def list_rejection_messages(user) -> list[dict]:
-    """Return ALL Gmail messages matching the rejection keyword filter (paginated)."""
-    return _list_all_messages(_get_service(user), REJECTION_QUERY)
+def list_rejection_messages(user, after_date: str = "after:2026/01/01") -> list[dict]:
+    """Return Gmail messages matching the rejection keyword filter (paginated)."""
+    return _list_all_messages(_get_service(user), _with_date(REJECTION_QUERY, after_date))
 
 
-def list_assessment_messages(user) -> list[dict]:
-    """Return ALL Gmail messages matching the assessment/coding-challenge filter (paginated)."""
-    return _list_all_messages(_get_service(user), ASSESSMENT_QUERY)
+def list_assessment_messages(user, after_date: str = "after:2026/01/01") -> list[dict]:
+    """Return Gmail messages matching the assessment/coding-challenge filter (paginated)."""
+    return _list_all_messages(_get_service(user), _with_date(ASSESSMENT_QUERY, after_date))
 
 
-def list_phone_screen_messages(user) -> list[dict]:
+def list_phone_screen_messages(user, after_date: str = "after:2026/01/01") -> list[dict]:
     """Return Gmail messages that look like phone screen / scheduling invites."""
-    return _list_all_messages(_get_service(user), PHONE_SCREEN_QUERY)
+    return _list_all_messages(_get_service(user), _with_date(PHONE_SCREEN_QUERY, after_date))
 
 
-def list_technical_messages(user) -> list[dict]:
+def list_technical_messages(user, after_date: str = "after:2026/01/01") -> list[dict]:
     """Return Gmail messages that look like technical interview invitations."""
-    return _list_all_messages(_get_service(user), TECHNICAL_QUERY)
+    return _list_all_messages(_get_service(user), _with_date(TECHNICAL_QUERY, after_date))
 
 
 def send_digest_email(user, html_body: str) -> None:

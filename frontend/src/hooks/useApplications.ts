@@ -16,7 +16,7 @@ export function useApplications(filters: ApplicationFilters = {}) {
   return useQuery({
     queryKey: ["applications", filters],
     queryFn: () => fetchApplications(filters),
-    refetchInterval: 2 * 60 * 1000, // re-fetch every 2 min to pick up periodic scans
+    refetchInterval: 30 * 1000, // re-fetch every 30s to pick up background scans
     refetchOnWindowFocus: true,      // also refetch immediately when tab regains focus
   });
 }

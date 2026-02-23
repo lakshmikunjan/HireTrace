@@ -141,6 +141,25 @@ async def _find_duplicate_application(
 # Public entry point
 # ---------------------------------------------------------------------------
 
+def _compute_after_date(user: User) -> str:
+    """
+    Return a Gmail 'after:YYYY/MM/DD' filter string.
+    On the first ever scan, go back to 2026-01-01.
+    On subsequent scans, use (last_scan_at - 2 hours) so we never miss an
+    email that arrived just before the previous scan completed.
+    """
+    from datetime import date as _date, timedelta as _td
+    year_start = _date(2026, 1, 1)
+    if user.last_scan_at:
+        cutoff = max(
+            (user.last_scan_at - _td(hours=2)).date(),
+            year_start,
+        )
+    else:
+        cutoff = year_start
+    return f"after:{cutoff.strftime('%Y/%m/%d')}"
+
+
 async def scan_inbox(user: User, db: AsyncSession) -> tuple[int, int]:
     """
     Scan the user's Gmail inbox for new application confirmation emails,
@@ -149,11 +168,14 @@ async def scan_inbox(user: User, db: AsyncSession) -> tuple[int, int]:
     missing company / title / location.
     Returns (new_applications_saved, emails_checked).
     """
-    new_count, emails_checked = await _scan_applications(user, db)
-    await _scan_rejections(user, db)
-    await _scan_assessments(user, db)
-    await _scan_phone_screens(user, db)
-    await _scan_technical_interviews(user, db)
+    after_date = _compute_after_date(user)
+    logger.info("Scanning inbox for %s (filter: %s)", user.email, after_date)
+
+    new_count, emails_checked = await _scan_applications(user, db, after_date)
+    await _scan_rejections(user, db, after_date)
+    await _scan_assessments(user, db, after_date)
+    await _scan_phone_screens(user, db, after_date)
+    await _scan_technical_interviews(user, db, after_date)
     await _repair_null_fields(user, db)
 
     user.last_scan_at = datetime.now(timezone.utc)
@@ -228,11 +250,11 @@ async def _repair_null_fields(user: User, db: AsyncSession) -> None:
 # Application confirmation scan
 # ---------------------------------------------------------------------------
 
-async def _scan_applications(user: User, db: AsyncSession) -> tuple[int, int]:
+async def _scan_applications(user: User, db: AsyncSession, after_date: str = "after:2026/01/01") -> tuple[int, int]:
     """Scan for application confirmation emails and create new records.
     Returns (new_count, emails_checked).
     """
-    messages = gmail_service.list_new_messages(user)
+    messages = gmail_service.list_new_messages(user, after_date=after_date)
     emails_checked = len(messages)
     logger.info("Gmail returned %d messages for %s", emails_checked, user.email)
     new_count = 0
@@ -346,12 +368,12 @@ async def _scan_applications(user: User, db: AsyncSession) -> tuple[int, int]:
 # Rejection scan
 # ---------------------------------------------------------------------------
 
-async def _scan_rejections(user: User, db: AsyncSession) -> None:
+async def _scan_rejections(user: User, db: AsyncSession, after_date: str = "after:2026/01/01") -> None:
     """
     Scan for rejection emails and update matching application status to 'rejected'.
     Only updates applications that haven't been manually overridden.
     """
-    messages = gmail_service.list_rejection_messages(user)
+    messages = gmail_service.list_rejection_messages(user, after_date=after_date)
 
     for msg_ref in messages:
         message_id = msg_ref["id"]
@@ -476,13 +498,13 @@ async def _scan_rejections(user: User, db: AsyncSession) -> None:
 # Assessment scan
 # ---------------------------------------------------------------------------
 
-async def _scan_assessments(user: User, db: AsyncSession) -> None:
+async def _scan_assessments(user: User, db: AsyncSession, after_date: str = "after:2026/01/01") -> None:
     """
     Scan for assessment/coding-challenge emails and update matching application
     status to 'assessment'. Only updates applications that haven't been manually
     overridden and are still in 'applied' status.
     """
-    messages = gmail_service.list_assessment_messages(user)
+    messages = gmail_service.list_assessment_messages(user, after_date=after_date)
 
     for msg_ref in messages:
         message_id = msg_ref["id"]
@@ -559,12 +581,12 @@ async def _scan_assessments(user: User, db: AsyncSession) -> None:
 # Phone screen invite scan
 # ---------------------------------------------------------------------------
 
-async def _scan_phone_screens(user: User, db: AsyncSession) -> None:
+async def _scan_phone_screens(user: User, db: AsyncSession, after_date: str = "after:2026/01/01") -> None:
     """
     Scan for recruiter / scheduling emails and advance matching 'applied'
     applications to 'phone_screen'.
     """
-    messages = list_phone_screen_messages(user)
+    messages = list_phone_screen_messages(user, after_date=after_date)
 
     for msg_ref in messages:
         message_id = msg_ref["id"]
@@ -634,12 +656,12 @@ async def _scan_phone_screens(user: User, db: AsyncSession) -> None:
 # Technical interview invite scan
 # ---------------------------------------------------------------------------
 
-async def _scan_technical_interviews(user: User, db: AsyncSession) -> None:
+async def _scan_technical_interviews(user: User, db: AsyncSession, after_date: str = "after:2026/01/01") -> None:
     """
     Scan for technical interview invitation emails and advance matching
     applications (applied / phone_screen / assessment) to 'technical'.
     """
-    messages = list_technical_messages(user)
+    messages = list_technical_messages(user, after_date=after_date)
 
     for msg_ref in messages:
         message_id = msg_ref["id"]
